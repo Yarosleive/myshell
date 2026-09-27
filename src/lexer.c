@@ -14,12 +14,12 @@ int is_word_start(char c) {
     return c != '\0' && !isspace(c) && !is_operator_char(c);
 }
 
-Lexer make_lexer(const char *input) {
+Lexer make_lexer(char *input) {
     Lexer lexer;
     lexer.pos = 0;
     lexer.len = strlen(input);
     lexer.input = malloc(sizeof(char) * (lexer.len + 1));
-    strcpy(input, lexer.input);
+    strcpy(lexer.input, input);
     return lexer;
 }
 
@@ -33,7 +33,7 @@ Tokenlist tokenize(Lexer *lexer) {
         Token token = next_token(lexer);
         if (tokens.len >= tokens.cap - 1) {
             tokens.cap *= 2;
-            tokens.data = realloc(tokens.data, tokens.cap);
+            tokens.data = realloc(tokens.data, sizeof(Token) * tokens.cap);
         }
         tokens.data[(tokens.len)++] = token;
         if (token.type == TOKEN_EOF) {
@@ -49,16 +49,16 @@ Token next_token(Lexer *lexer) {
     }
 
     Token token;
-    token.lenth = 0;
+    token.length = 0;
     token.value = NULL;
 
-    if (at_end(lexer)) {
+    if (at_end(lexer) || peek(lexer, 0) == '#') {
         token.type = TOKEN_EOF;
         return token;
     }
 
     if (is_word_start(peek(lexer, 0))) {
-        return read_word(lexer);
+        return read_word (lexer);
     }
 
     return read_operator(lexer);
@@ -66,14 +66,23 @@ Token next_token(Lexer *lexer) {
 
 Token read_word(Lexer *lexer) {
     int start = lexer->pos;
-    while (!at_end(lexer) && is_word_start(peek(lexer, 0))) {
+    if (peek(lexer, 0) == '"' || peek(lexer, 0) == '\'') {
+        char quote = peek(lexer, 0);
         advance(lexer, 1);
+        while (peek(lexer, 0) != quote && !at_end(lexer)) {
+            advance(lexer, 1);
+        }
+        advance(lexer, 1);
+    } else {
+        while (!at_end(lexer) && is_word_start(peek(lexer, 0))) {
+            advance(lexer, 1);
+        }
     }
 
     Token token;
     token.type = TOKEN_WORD;
-    token.lenth = lexer->pos - start;
-    token.value = strndup(lexer->input + start, token.lenth);
+    token.length = lexer->pos - start;
+    token.value = strndup(lexer->input + start, token.length);
     return token;
 }
 
@@ -83,9 +92,9 @@ Token read_operator(Lexer *lexer) {
         advance(lexer, 1);
     }
     Token token;
-    token.lenth = lexer->pos - start;
-    token.value = strndup(lexer->input + start, token.lenth);
-    if (token.lenth == 2) {
+    token.length = lexer->pos - start;
+    token.value = strndup(lexer->input + start, token.length);
+    if (token.length == 2) {
         switch (token.value[0]) {
             case '|':
                 token.type = TOKEN_OR_IF;
@@ -100,7 +109,7 @@ Token read_operator(Lexer *lexer) {
                 perror("Unknown 2 digit operator");
                 break;
         }
-    } else if (token.lenth == 1) {
+    } else if (token.length == 1) {
         switch (token.value[0]) {
             case '|':
                 token.type = TOKEN_PIPE;
