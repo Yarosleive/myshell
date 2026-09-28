@@ -65,24 +65,48 @@ Token next_token(Lexer *lexer) {
 }
 
 Token read_word(Lexer *lexer) {
-    int start = lexer->pos;
+    Token token;
+    token.type = TOKEN_WORD;
     if (peek(lexer, 0) == '"' || peek(lexer, 0) == '\'') {
         char quote = peek(lexer, 0);
         advance(lexer, 1);
-        while (peek(lexer, 0) != quote && !at_end(lexer)) {
+        int start = lexer->pos;
+        while (peek(lexer, 0) != quote && !at_end(lexer) ) {
+            if (quote == '"' && peek(lexer, 0) == '\\' &&
+                (peek(lexer, 1) == '\\' || peek(lexer, 1) == quote)) {
+                    advance(lexer, 1);
+            }
             advance(lexer, 1);
         }
-        advance(lexer, 1);
+        if (peek(lexer, 0) == '\0') {
+            perror("not closed quote");
+        } else {
+            advance(lexer, 1);
+        }
+        
+        token.value = malloc(sizeof(char) * (lexer->pos - start));
+        int j = 0;
+        for (int i = start; i < lexer->pos - 1; ++i) {
+            if (quote == '"' && lexer->input[i] == '\\' &&
+                (lexer->input[i + 1] == '\\' || lexer->input[i + 1] == quote)) {
+                    ++i;
+                    token.value[j++] = lexer->input[i];
+                    continue;
+            }
+            token.value[j++] = lexer->input[i];
+            
+        }
+        token.value[j] = '\0';
+        token.length = j;
     } else {
+        int start = lexer->pos;
         while (!at_end(lexer) && is_word_start(peek(lexer, 0))) {
             advance(lexer, 1);
         }
+        token.length = lexer->pos - start;
+        token.value = strndup(lexer->input + start, token.length);
     }
 
-    Token token;
-    token.type = TOKEN_WORD;
-    token.length = lexer->pos - start;
-    token.value = strndup(lexer->input + start, token.length);
     return token;
 }
 
