@@ -2,13 +2,43 @@
 #include <stdlib.h>
 #include "token.h"
 #include "lexer.h"
+#include "parser.h"
+#include "ast.h"
+
+void print_ast(Expr *node, int depth) {
+    if (!node) return;
+    
+    for (int i = 0; i < depth; i++) printf("  ");
+
+    const char *node_type_names[] = {
+        "LIST", "AND_OR", "PIPELINE", "SIMPLE", "ARG", "SUBSHELL", "REDIR"
+    };
+
+    printf("[%s] text: %s\n", 
+        node_type_names[node->type], 
+        node->text ? node->text : "NULL");
+
+    if (node->left) {
+        for (int i = 0; i < depth + 1; i++) printf("  ");
+        printf("left ->\n");
+        print_ast(node->left, depth + 2);
+    }
+    
+    if (node->right) {
+        for (int i = 0; i < depth + 1; i++) printf("  ");
+        printf("right ->\n");
+        print_ast(node->right, depth + 2);
+    }
+}
 
 int main(void) {
-    // Тестовая строка со словами, флагами и операторами
     char test_input[256];
     
-    fgets(test_input, 256, stdin);
-    printf("Input string: %s\n\n", test_input);
+    printf("Enter command: ");
+    if (!fgets(test_input, 256, stdin)) {
+        return 0;
+    }
+    printf("\nInput string: %s\n", test_input);
 
     Lexer lexer = make_lexer(test_input);
     Tokenlist tokens = tokenize(&lexer);
@@ -21,10 +51,17 @@ int main(void) {
             token_type_name(t.type), 
             t.value ? t.value : "NULL");
     }
+    printf("\n");
 
-    // Не забываем освободить выделенную память!
-    free((void*)lexer.input); // освобождаем строку внутри лексера
-    free_tokenlist(&tokens);  // освобождаем токены и сам массив
+    Parser parser = make_parser(&tokens);
+    Expr *root = parse(&parser);
+
+    printf("--- AST Structure ---\n");
+    print_ast(root, 0);
+
+    free_ast(root);
+    free_tokenlist(&tokens);
+    free((void*)lexer.input);
 
     return 0;
 }

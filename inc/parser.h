@@ -8,12 +8,12 @@ typedef struct {
     int pos;
 } Parser;
 
-Token peek(Parser *parser, int offset);
-Token previous(Parser *parser);
-int check(Parser *parser, TokenType type);
-int match(Parser *parser, TokenType type);
-Token *advance(Parser *parser);
-void expect(Parser *parser, TokenType type);
+Token p_peek(Parser *parser, int offset);
+Token p_previous(Parser *parser);
+int p_check(Parser *parser, TokenType type);
+int p_match(Parser *parser, TokenType type);
+Token *p_advance(Parser *parser);
+void p_expect(Parser *parser, TokenType type);
 
 Parser make_parser(Tokenlist *tokens);
 Expr *parse(Parser *parser);

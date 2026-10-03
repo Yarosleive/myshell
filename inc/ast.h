@@ -17,3 +17,4 @@ typedef struct Expr {
     struct Expr *right;
 } Expr;
 
+void free_ast(Expr *node);

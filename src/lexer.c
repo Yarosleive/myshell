@@ -80,6 +80,7 @@ Token read_word(Lexer *lexer) {
         }
         if (peek(lexer, 0) == '\0') {
             perror("not closed quote");
+            exit(1);
         } else {
             advance(lexer, 1);
         }
@@ -131,7 +132,7 @@ Token read_operator(Lexer *lexer) {
                 break;
             default:
                 perror("Unknown 2 digit operator");
-                break;
+                exit(1);
         }
     } else if (token.length == 1) {
         switch (token.value[0]) {
@@ -158,10 +159,11 @@ Token read_operator(Lexer *lexer) {
                 break;
             default:
                 perror("Unknown 1 digit operator");
-                break;
+                exit(1);
         }
     } else {
         perror("unknown operator");
+        exit(1);
     }
     return token;
 }
