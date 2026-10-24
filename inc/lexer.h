@@ -3,15 +3,16 @@
 #include "token.h"
 
 typedef struct {
-    char *input;
+    const char *input;
     int pos;
     int len;
 } Lexer;
 
 Tokenlist tokenize(Lexer *lexer);
-Lexer make_lexer(char *input);
+Lexer make_lexer(const char *input);
 
 Token next_token(Lexer *lexer);
+char *read_quote(Lexer *lexer);
 Token read_word(Lexer *lexer);
 Token read_operator(Lexer *lexer);
 

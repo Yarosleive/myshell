@@ -1,9 +1,15 @@
 #include "parser.h"
+#include "token.h"
 #include "ast.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+/*Идея такая: существуют разные "уровни" строки интерпретатора
+Под каждый урвоень написана своя фунция
+Формируем дерево по этим уровням*/
+
+// Аналок конструктора 
 Parser make_parser(Tokenlist *tokens) {
     Parser parser;
     parser.tokens = tokens;
@@ -11,154 +17,232 @@ Parser make_parser(Tokenlist *tokens) {
     return parser;
 }
 
-Expr *make_expr(NodeType type, char *text, Expr *left, Expr *right) {
-    Expr *expr = malloc(sizeof(Expr));
-    if (!expr) {
-        perror("malloc failed for Expr");
+// создать узел дерева
+ExprNode *make_binary(NodeType type, ExprNode *left, ExprNode *right, OpType op) {
+    ExprNode *expr = malloc(sizeof(ExprNode));
+    if (expr == NULL) {
+        perror("malloc failed for binary");
         exit(1);
-    }
+    } 
+
     expr->type = type;
-    if (text != NULL) {
-        expr->text = strdup(text);
-    } else {
-        expr->text = NULL;
-    }
-    
-    expr->left = left;
-    expr->right = right;
+    expr->binary.left = left;
+    expr->binary.right = right;
+    expr->binary.op = op;
     return expr;
 }
 
-Expr *parse(Parser *parser) {
-    Expr *root = parse_list(parser);
+ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
+    ExprNode *expr = malloc(sizeof(ExprNode));
+    if (expr == NULL) {
+        perror("malloc failed for simple");
+        exit(1);
+    } 
+
+    expr->type = type;
+    expr->simple.args = malloc(sizeof(char *) * argc);
+    for (int i = 0; i < argc; ++i) {
+        expr->simple.args[i] = strdup(args[i]);
+    }
+    expr->simple.redirs = redirs;
+    expr->simple.argc = argc;
+    return expr;
+}
+
+ExprNode *make_redir(NodeType type, ExprNode *next, const char *fname, RedirOp op) {
+    ExprNode *expr = malloc(sizeof(ExprNode));
+    if (expr == NULL) {
+        perror("malloc failed for redir");
+        exit(1);
+    } 
+
+    expr->type = type;
+    expr->redir.next = next;
+    expr->redir.fname = strdup(fname);
+    expr->redir.op = op;
+    return expr;
+}
+
+ExprNode *make_subshell(NodeType type, ExprNode *inner, ExprNode *redirs) {
+    ExprNode *expr = malloc(sizeof(ExprNode));
+    if (expr == NULL) {
+        perror("malloc failed for subshell");
+        exit(1);
+    } 
+
+    expr->type = type;
+    expr->subshell.inner = inner;
+    expr->subshell.redirs = redirs;
+    return expr;
+}
+
+ExprNode *make_word(NodeType type, char *value) {
+    ExprNode *expr = malloc(sizeof(ExprNode));
+    if (expr == NULL) {
+        perror("malloc failed for subshell");
+        exit(1);
+    } 
+
+    expr->type = type;
+    expr->word.value = value;
+    return expr;
+}
+
+OpType define_op_type(Token token) {
+    switch (token.type) {
+        case TOKEN_OR_IF:
+            return OP_OR_IF;
+        case TOKEN_AND_IF:
+            return OP_AND_IF;
+        case TOKEN_SEMICOLON:
+            return OP_SEMICOLON;
+        case TOKEN_PIPE:
+            return OP_PIPE;
+        case TOKEN_AMPERSAND:
+            return OP_AMPERSAND;
+        default:
+            perror("unknown op");
+            exit(1);
+    }
+}
+
+RedirOp define_redir_op(Token token) {
+    switch (token.type) {
+        case TOKEN_LESS:
+            return REDIR_LESS;
+        case TOKEN_GREATER:
+            return REDIR_GREATER;
+        case TOKEN_GG:
+            return REDIR_GG;
+        default:
+            perror("unknown redir");
+            exit(1);
+    }
+}
+
+
+// основная функция
+ExprNode *parse(Parser *parser) {
+    ExprNode *root = parse_list(parser);
     p_expect(parser, TOKEN_EOF);
     return root;
 }
 
-Expr *parse_list(Parser *parser) {
-    Expr *left = parse_and_or(parser);
+/* list        = and_or , { ( ";" | "&" ) , [ and_or ] } ;
+список разделяется  операторами ; или &
+сначала обрабатываем левое поддерево, потом определяем тип операции,
+потом читаем правое поддерево*/
+ExprNode *parse_list(Parser *parser) {
+    ExprNode *left = parse_and_or(parser);
     while (p_match(parser, TOKEN_SEMICOLON) || p_match(parser, TOKEN_AMPERSAND)) {
-        char *op = p_previous(parser).value;
-        Expr *right = NULL;
+        OpType op = define_op_type(p_previous(parser));
+        ExprNode *right = NULL;
         if (!p_check(parser, TOKEN_EOF) && !p_check(parser, TOKEN_RPAREN)) {
             right = parse_and_or(parser);
         }
-        left = make_expr(NODE_LIST, op, left, right);
+        left = make_binary(NODE_LIST, left, right, op);
     }
     return left;
 }
 
-Expr *parse_and_or(Parser *parser) {
-    Expr *left = parse_pipeline(parser);
+// and_or      = pipeline , { ( "&&" | "||" ) , pipeline } ;
+ExprNode *parse_and_or(Parser *parser) {
+    ExprNode *left = parse_pipeline(parser);
     while (p_match(parser, TOKEN_AND_IF) || p_match(parser, TOKEN_OR_IF)) {
-        char *op = p_previous(parser).value;
-        Expr *right = parse_pipeline(parser);
-        left = make_expr(NODE_AND_OR, op, left, right);
+        OpType op = define_op_type(p_previous(parser));
+        ExprNode *right = parse_pipeline(parser);
+        left = make_binary(NODE_AND_OR, left, right, op);
     }
     return left;
 }
 
-Expr *parse_pipeline(Parser *parser) {
-    Expr *left = parse_command(parser);
+// pipeline    = command , { "|" , command } ;
+ExprNode  *parse_pipeline(Parser *parser) {
+    ExprNode *left = parse_command(parser);
     while (p_match(parser, TOKEN_PIPE)) {
-        char *op = p_previous(parser).value;
-        Expr *right = parse_command(parser);
-        left = make_expr(NODE_PIPELINE, op, left, right);
+        OpType op = define_op_type(p_previous(parser));
+        ExprNode *right = parse_command(parser);
+        left = make_binary(NODE_PIPELINE, left, right, op);
     }
     return left;
 }
 
-Expr *parse_command(Parser *parser) {
+// command     = simple | subshell ;
+ExprNode  *parse_command(Parser *parser) {
     if (p_match(parser, TOKEN_LPAREN)) {
         return parse_subshell(parser);
     }
     return parse_simple(parser);
 }
 
-Expr *parse_subshell(Parser *parser) {
-    Expr *list= parse_list(parser);
+// subshell    = "(" , list , ")" , { redirection } ;
+ExprNode  *parse_subshell(Parser *parser) {
+    ExprNode *list= parse_list(parser);
+    ExprNode *redirs = parse_redirection(parser);
+    
     p_expect(parser, TOKEN_RPAREN);
-    Expr *subshell = make_expr(NODE_SUBSHELL, NULL, list, NULL);
-    Expr *last_redir = NULL;
-    while (p_check(parser, TOKEN_LESS) || p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
-        Expr *redir = parse_redirection(parser);
-        if (subshell->right == NULL) {
-            subshell->right = redir;
-        } else {
-            last_redir->right = redir; // цепляем цепочку перенаправлений
-        }
-        last_redir = redir;
-    }
-    return list;
+    ExprNode *subshell = make_subshell(NODE_SUBSHELL, list, redirs);
+    
+    return subshell;
 }
 
-Expr *parse_redirection(Parser *parser) {
-    Token op = p_peek(parser, 0);
+// redirection = ( "<" | ">" | ">>" ) , word ;
+ExprNode  *parse_redirection(Parser *parser) {
     if (p_match(parser, TOKEN_LESS) || p_match(parser, TOKEN_GREATER) || p_match(parser, TOKEN_GG)) {
+        RedirOp op = define_redir_op(p_previous(parser));
         if (!p_check(parser, TOKEN_WORD)) {
             perror("expected filename after redirection");
             exit(1);
         }
         Token fname = *p_advance(parser);
-        Expr *fname_node = make_expr(NODE_ARG, fname.value, NULL, NULL);
-        return make_expr(NODE_REDIR, op.value, fname_node, NULL);
+        ExprNode *next = parse_redirection(parser);
+        return make_redir(NODE_REDIR, next, fname.value, op);
     }
     return NULL;
 }
 
-Expr *parse_simple(Parser *parser) {
-    Expr *first_redir = NULL;
-    Expr *last_redir = NULL;
-    while (p_check(parser, TOKEN_LESS) || p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
-        Expr *redir = parse_redirection(parser);
-        if (first_redir == NULL) {
-            first_redir = redir;
-        } else {
-            last_redir->right = redir;
-        }
-        last_redir = redir;
-    }
-
+// сделать редирекции 
+// simple      = { redirection } , word , { word | redirection } ;
+ExprNode  *parse_simple(Parser *parser) {
+    ExprNode *first_redir = parse_redirection(parser);
+    
     if (!p_check(parser, TOKEN_WORD)) {
         perror("expected command name");
         exit(1);
     }
-
     Token command = *p_advance(parser);
-    Expr *simple = make_expr(NODE_SIMPLE, command.value, NULL, NULL);
-    simple->right = first_redir;
 
-    if (last_redir == NULL && simple->right != NULL) {
-        last_redir = simple->right;
-        while (last_redir->right != NULL) {
-            last_redir = last_redir->right;
-        }
+    ExprNode *last_redir = first_redir;
+    int cap = 4, len = 0;
+    char **args = malloc(sizeof(char *) * cap);
+    args[len++] = strdup(command.value);
+
+    while (last_redir != NULL && last_redir->redir.next != NULL) {
+        last_redir = last_redir->redir.next;
     }
-
     while (p_check(parser, TOKEN_WORD) || p_check(parser, TOKEN_LESS) ||
             p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
         if (p_check(parser, TOKEN_LESS) || p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
-            Expr *redir = parse_redirection(parser);
-            if (simple->right == NULL) {
-                simple->right = redir;
+            ExprNode *redir = parse_redirection(parser);
+            if (last_redir == NULL) {
+                first_redir = redir;
             } else {
-                last_redir->right = redir;
+                last_redir->redir.next = redir;
             }
             last_redir = redir;
+            while (last_redir->redir.next != NULL) {
+                last_redir = last_redir->redir.next;
+            }
         } else {
-            Token arg = *p_advance(parser);
-            Expr *arg_node = make_expr(NODE_ARG, arg.value, NULL, NULL);
-            if (simple->left == NULL) {
-                simple->left = arg_node;
-            } else {
-                Expr *cur = simple->left;
-                while (cur->right != NULL) {
-                    cur = cur->right;
-                }
-                cur->right = arg_node;
+            args[len++] = strdup(p_advance(parser)->value);
+            if (len >= cap) {
+                cap *= 2;
+                args = realloc(args, sizeof(char *) * cap);
             }
         }
     }
+
+    ExprNode *simple = make_simple(NODE_SIMPLE, first_redir, args, len);
     return simple;
 }
 
@@ -205,12 +289,33 @@ void p_expect(Parser *parser, TokenType type) {
     }
 }
 
-void free_ast(Expr *node) {
+void free_ast(ExprNode *node) {
     if (!node) return;
-    free_ast(node->left);
-    free_ast(node->right);
-    if (node->text) {
-        free((void*)node->text);
+    switch (node->type) {
+        case NODE_LIST:
+        case NODE_AND_OR:
+        case NODE_PIPELINE:
+            free_ast(node->binary.left);
+            free_ast(node->binary.right);
+            break;
+        case NODE_SIMPLE:
+            free_ast(node->simple.redirs);
+            for (int i = 0; i < node->simple.argc; ++i) {
+                free(node->simple.args[i]);
+            }
+            free(node->simple.args);\
+            break;
+        case NODE_REDIR:
+            free_ast(node->redir.next);
+            free(node->redir.fname);
+            break;
+        case NODE_SUBSHELL:
+            free_ast(node->subshell.inner);
+            free_ast(node->subshell.redirs);
+            break;
+        case NODE_ARG:
+            free(node->word.value);
+            break;
     }
     free(node);
 }
