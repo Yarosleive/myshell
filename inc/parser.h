@@ -6,6 +6,7 @@
 typedef struct {
     Tokenlist *tokens;
     int pos;
+    int has_error;
 } Parser;
 
 Token p_peek(Parser *parser, int offset);

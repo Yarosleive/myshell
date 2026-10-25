@@ -14,6 +14,7 @@ Parser make_parser(Tokenlist *tokens) {
     Parser parser;
     parser.tokens = tokens;
     parser.pos = 0;
+    parser.has_error = 0;
     return parser;
 }
 
@@ -40,10 +41,11 @@ ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
     } 
 
     expr->type = type;
-    expr->simple.args = malloc(sizeof(char *) * argc);
+    expr->simple.args = malloc(sizeof(char *) * (argc + 1));
     for (int i = 0; i < argc; ++i) {
         expr->simple.args[i] = strdup(args[i]);
     }
+    expr->simple.args[argc] = NULL;
     expr->simple.redirs = redirs;
     expr->simple.argc = argc;
     return expr;
@@ -151,6 +153,11 @@ ExprNode *parse_and_or(Parser *parser) {
     while (p_match(parser, TOKEN_AND_IF) || p_match(parser, TOKEN_OR_IF)) {
         OpType op = define_op_type(p_previous(parser));
         ExprNode *right = parse_pipeline(parser);
+        if (right == NULL) {
+            parser->has_error = 1;
+            free_ast(left);
+            return NULL;
+        }
         left = make_binary(NODE_AND_OR, left, right, op);
     }
     return left;
@@ -241,15 +248,16 @@ ExprNode  *parse_simple(Parser *parser) {
             }
         }
     }
-
     ExprNode *simple = make_simple(NODE_SIMPLE, first_redir, args, len);
     return simple;
 }
 
 Token p_peek(Parser *parser, int offset) {
     if (parser->pos + offset >= parser->tokens->len) {
-        perror("peek");
-        exit(1);
+        Token eof_token;
+        eof_token.type = TOKEN_EOF;
+        eof_token.value = NULL;
+        return eof_token;
     }
     return parser->tokens->data[parser->pos + offset];
 }
@@ -286,6 +294,13 @@ void p_expect(Parser *parser, TokenType type) {
     if (!p_match(parser, type)) {
         perror("Unexpected token");
         exit(1);
+    }
+}
+
+void parser_error(Parser *p, const char *msg) {
+    if (!p->has_error) {
+        p->has_error = 1;
+        fprintf(stderr, "my_shell: syntax error: %s\n", msg);
     }
 }
 
