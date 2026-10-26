@@ -12,6 +12,9 @@ int builtin_cd(char **args);
 int builtin_exit(char **args);
 int builtin_pwd(char ** args);
 int builtin_echo(char **args);
+int builtin_help(char **args);
+int builtin_jobs(char **args);
+int builtin_fg(char **args);
 
 extern Builtin builtins[];
 

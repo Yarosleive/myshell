@@ -1,4 +1,5 @@
 #include "builtins.h"
+#include "jobs.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@ Builtin builtins[] = {
     {"pwd", builtin_pwd},
     {"exit", builtin_exit},
     {"echo", builtin_echo},
+    {"help", builtin_echo},
     {NULL, NULL}
 };
 
@@ -74,6 +76,82 @@ int builtin_echo(char **args) {
     }
     if (!flag) {
         printf("\n");
+    }
+    return 0;
+}
+
+int builtin_help(char **args) {
+    puts("| Команда | Назначение |");
+    puts("|---------|-----------|");
+    puts("| `cd [каталог]` | смена текущего каталога |");
+    puts("| `pwd` | вывод текущего каталога |");
+    puts("| `echo [-n] [аргументы]` | вывод аргументов |");
+    puts("| `help` | краткая справка по встроенным командам |");
+    puts("| `exit [код]` | завершение работы интерпретатора |");
+    puts("| `jobs` | список заданий |");
+    puts("| `fg [%n]` | перевод задания на передний план |");
+    puts("| `bg [%n]` | продолжение остановленного задания в фоне |");
+    puts("| `kill` | отправка сигнала процессу или заданию |");
+    puts("| `wait [pid\|%n]` | ожидание завершения заданий |");
+    return 1;
+}
+
+int builtin_jobs(char **args) {
+    update_jobs();
+    for (int i = 0; i < MAX_JOBS; ++i) {
+        Job *job = get_job_by_ind(i);
+        if (job != NULL && job->state != JOB_DONE) {
+            char marker;
+            if (job == get_cur_job()) {
+                marker = '+';
+            } else if (job == get_prev_job()) {
+                marker = '-';
+            } else {
+                marker = ' ';
+            }
+            const char *state;
+            if (job->state == JOB_RUNNIG) {
+                state = "Running";
+            } else {
+                state = "Stopped";
+            }
+            printf("[%d]%c  %s\t\t%s\n", job->id, marker, job->state, job->command);
+        }
+    }
+    return 0;
+}
+
+int builtin_fg(char **args) {
+    if (args[1] == NULL) {
+        return 0;
+    }
+    Job *job = find_job_by_spec(args[1]);
+    if (job == NULL) {
+        perror("fg: no such job\n");
+        return 1;
+    }
+    if (job->command) {
+        printf("%s\n", job->command);
+    }
+
+    job->state = JOB_RUNNIG;
+    tcsetpgrp(STDIN_FILENO, job->pgid);
+
+    if (kill(-job->pgid, SIGCONT) < 0) {
+        perror("kill Sigcount");
+    }
+
+    int status;
+    waitpid(-job->pgid, &status, WUNTRACED);
+
+    tcsetpgrp(STDIN_FILENO, getpgrp());
+
+    if (WIFSTOPPED(status)) {
+        job->state = JOB_STOPPED;
+        printf("\n[%d]+  Stopped\t\t%s\n", job->id, job->command);
+    } else {
+        job->state = JOB_DONE;
+        remove_job_by_id(job->id);
     }
     return 0;
 }

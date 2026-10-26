@@ -1,26 +1,27 @@
 #include "executor.h"
 #include "builtins.h"
+#include "jobs.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 
-int execute(ExprNode *node, int bg) {
+int execute(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
     }
     switch (node->type) {
         case NODE_LIST:
-            return execute_list(node, bg);
+            return execute_list(node, bg, cmd_line);
         case NODE_AND_OR:
-            return execute_and_or(node, bg);
+            return execute_and_or(node, bg, cmd_line);
         case NODE_PIPELINE:
-            return execute_pipeline(node, bg);
+            return execute_pipeline(node, bg, cmd_line);
         case NODE_SIMPLE:
-            return execute_simple(node, bg);
+            return execute_simple(node, bg, cmd_line);
         case NODE_SUBSHELL:
-            return execute_subshell(node, bg);
+            return execute_subshell(node, bg, cmd_line);
         default:
             perror("Executor: unknown ExprNode type");
             return 1;
@@ -59,40 +60,40 @@ int apply_redirections(ExprNode *redirs) {
     return 0;
 }
 
-int execute_list(ExprNode *node, int bg) {
+int execute_list(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
     }
 
     int bg2 = node->binary.op == OP_AMPERSAND;
-    execute(node->binary.left, bg2 || bg);
+    execute(node->binary.left, bg2 || bg, cmd_line);
 
     int status = 0;
     if (node->binary.right != NULL) {
-        status = execute(node->binary.right, bg);
+        status = execute(node->binary.right, bg, cmd_line);
     }
     return status;
 }
 
-int execute_and_or(ExprNode *node, int bg) {
+int execute_and_or(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL || node->binary.left == NULL || node->binary.right == NULL) {
         return 0;
     }
-    int status = execute(node->binary.left, bg);
+    int status = execute(node->binary.left, bg, cmd_line);
 
     if (node->binary.op == OP_AND_IF) {
         if (status == 0) {
-            status = execute(node->binary.right, bg);
+            status = execute(node->binary.right, bg, cmd_line);
         }
         return status;
     }
     if (status != 0) {
-        status = execute(node->binary.right, bg);
+        status = execute(node->binary.right, bg, cmd_line);
     }
     return status;
 }
 
-int execute_pipeline(ExprNode *node, int bg) {
+int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
     }
@@ -101,6 +102,7 @@ int execute_pipeline(ExprNode *node, int bg) {
         perror("pipe");
         exit(1);
     }
+
     pid_t pid1 = fork();
     if (pid1 < 0) {
         perror("fork");
@@ -108,12 +110,22 @@ int execute_pipeline(ExprNode *node, int bg) {
         close(pipefds[1]);
         exit(1);
     } else if (pid1 == 0) {
+        setpgid(0, 0);
+
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+
         close(pipefds[0]);
         dup2(pipefds[1], STDOUT_FILENO);
         close(pipefds[1]);
-        int status = execute(node->binary.left, 0);
+        int status = execute(node->binary.left, 0, cmd_line);
         exit(status);
     }
+
+    setpgid(pid1, pid1);
 
     pid_t pid2 = fork();
     if (pid2 < 0) {
@@ -122,10 +134,18 @@ int execute_pipeline(ExprNode *node, int bg) {
         close(pipefds[1]);
         exit(1);
     } else if (pid2 == 0) {
+        setpgid(0, pid1);
+
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+
         close(pipefds[1]);
         dup2(pipefds[0], STDIN_FILENO);
         close(pipefds[0]);
-        int status = execute(node->binary.right, 0);
+        int status = execute(node->binary.right, 0, cmd_line);
         exit(status);
     }
 
@@ -133,13 +153,20 @@ int execute_pipeline(ExprNode *node, int bg) {
     close(pipefds[1]);
 
     if (bg) {
-        printf("[%d]\n", (int)pid2);
+        int job_id = add_job_id(pid1, cmd_line);
+        printf("[%d] %d\n", job_id, (int)pid2);
         return 0;
     }
 
+    int job_id = add_job_id(pid1, cmd_line);
+
+    tcsetpgrp(STDIN_FILENO, pid1);
+
     int status1, status2;
-    waitpid(pid1, &status1, 0);
-    waitpid(pid2, &status2, 0);
+    waitpid(pid1, &status1, WUNTRACED);
+    waitpid(pid2, &status2, WUNTRACED);
+
+    tcsetpgrp(STDIN_FILENO, getpgrp());
 
     if (WIFEXITED(status2)) {
         return WEXITSTATUS(status2);
@@ -149,7 +176,7 @@ int execute_pipeline(ExprNode *node, int bg) {
     return 1;
 }
 
-int execute_simple(ExprNode *node, int bg) {
+int execute_simple(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL || node->simple.args == NULL || node->simple.args[0] == NULL) {
         return 0;
     }
@@ -163,6 +190,14 @@ int execute_simple(ExprNode *node, int bg) {
         perror("fork");
         exit(1);
     } else if (pid == 0) {
+        setpgid(0, 0);
+
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+
         if (apply_redirections(node->simple.redirs) != 0) {
             perror("apply redirection");
             exit(1);
@@ -171,12 +206,24 @@ int execute_simple(ExprNode *node, int bg) {
         perror("exec");
         exit(127);
     }
+
+    setpgid(pid, pid);
+
     if (bg) {
-        printf("[%d]\n", (int)pid);
+        int job_id = add_job_id(pid, cmd_line);
+        printf("[%d] %d\n", job_id, (int)pid);
         return 0;
     }
+
+    tcsetpgrp(STDIN_FILENO, pid);
+
     int status;
-    waitpid(pid, &status, 0);
+    waitpid(pid, &status, WUNTRACED);
+
+    int job_id = add_job_id(pid, cmd_line);
+
+    tcsetpgrp(STDIN_FILENO, getpgrp());
+
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
@@ -185,7 +232,7 @@ int execute_simple(ExprNode *node, int bg) {
     return 1;
 }
 
-int execute_subshell(ExprNode *node, int bg) {
+int execute_subshell(ExprNode *node, int bg, char *cmd_line) {
     if (node->subshell.inner == NULL) {
         return 0;
     }
@@ -194,20 +241,39 @@ int execute_subshell(ExprNode *node, int bg) {
         perror("pid");
         exit(1);
     } else if (pid == 0) {
+        setpgid(0, 0);
+
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+
         if (apply_redirections(node->subshell.redirs) != 0) {
             perror("apply redirection");
             exit(1);
         }
-        int status = execute(node->subshell.inner, 0);
+        int status = execute(node->subshell.inner, 0, cmd_line);
         exit(status);
     }
     
+    setpgid(pid, pid);
+
     if (bg) {
-        printf("[%d]\n", (int)pid);
+        int job_id = add_job_id(pid, cmd_line);
+        printf("[%d] %d\n", job_id, (int)pid);
         return 0;
     }
+
+    int job_id = add_job_id(pid, cmd_line);
+
+    tcsetpgrp(STDIN_FILENO, pid);
+
     int status;
-    waitpid(pid, &status, 0);
+    waitpid(pid, &status, WUNTRACED);
+
+    tcsetpgrp(STDIN_FILENO, getpgrp());
+
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
