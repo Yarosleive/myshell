@@ -6,7 +6,7 @@
 #define MAX_JOBS 64
 
 typedef enum {
-    JOB_RUNNIG,
+    JOB_RUNNING,
     JOB_STOPPED,
     JOB_DONE
 } JobState;

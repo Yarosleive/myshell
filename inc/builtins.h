@@ -15,6 +15,8 @@ int builtin_echo(char **args);
 int builtin_help(char **args);
 int builtin_jobs(char **args);
 int builtin_fg(char **args);
+int builtin_bg(char **args);
+int builtin_wait(char **args);
 
 extern Builtin builtins[];
 

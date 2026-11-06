@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/wait.h>
 
 Builtin builtins[] = {
     {"cd", builtin_cd},
@@ -11,6 +13,9 @@ Builtin builtins[] = {
     {"exit", builtin_exit},
     {"echo", builtin_echo},
     {"help", builtin_echo},
+    {"fg", builtin_fg},
+    {"bg", builtin_bg},
+    {"wait", builtin_wait},
     {NULL, NULL}
 };
 
@@ -110,7 +115,7 @@ int builtin_jobs(char **args) {
                 marker = ' ';
             }
             const char *state;
-            if (job->state == JOB_RUNNIG) {
+            if (job->state == JOB_RUNNING) {
                 state = "Running";
             } else {
                 state = "Stopped";
@@ -122,9 +127,6 @@ int builtin_jobs(char **args) {
 }
 
 int builtin_fg(char **args) {
-    if (args[1] == NULL) {
-        return 0;
-    }
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
         perror("fg: no such job\n");
@@ -134,7 +136,7 @@ int builtin_fg(char **args) {
         printf("%s\n", job->command);
     }
 
-    job->state = JOB_RUNNIG;
+    job->state = JOB_RUNNING;
     tcsetpgrp(STDIN_FILENO, job->pgid);
 
     if (kill(-job->pgid, SIGCONT) < 0) {
@@ -154,4 +156,197 @@ int builtin_fg(char **args) {
         remove_job_by_id(job->id);
     }
     return 0;
+}
+
+int builtin_bg(char **args) {
+    Job *job = find_job_by_spec(args[1]);
+    if (job == NULL) {
+        perror("bg: no such job");
+        return 1;
+    }
+
+    if (job->state == JOB_RUNNING) {
+        printf("Job is already in bg\n");
+        return 1;
+    }
+
+    job->state = JOB_RUNNING;
+    if (job->command != NULL) {
+        printf("[%d]  %s &\n", job->id, job->command);
+    } else {
+        printf("[%d]  %s &\n", job->id, "");
+    }
+
+    if (kill(-job->pgid, SIGCONT) < 0) {
+        perror("kill");
+        return 1;
+    }
+
+    update_job_pointers();
+    return 0;
+}
+
+int parse_signame(char *signame) {
+    if (signame[0] >= '0' && signame[0] <= '9') {
+        return atoi(signame[0]);
+    }
+    if (strncmp(signame, "SIG", 3) == 0) {
+        signame += sizeof(char) * 3;
+    }
+
+    if (strcmp(signame, "TERM") == 0)
+        return SIGTERM;
+    if (strcmp(signame, "KILL") == 0)
+        return SIGKILL;
+    if (strcmp(signame, "INT") == 0)
+        return SIGINT;
+    if (strcmp(signame, "STOP") == 0)
+        return SIGSTOP;
+    if (strcmp(signame, "CONT") == 0)
+        return SIGCONT;
+    if (strcmp(signame, "HUP") == 0)
+        return SIGHUP;
+    if (strcmp(signame, "QUIT") == 0)
+        return SIGQUIT;
+    if (strcmp(signame, "USR1") == 0)
+        return SIGUSR1;
+    if (strcmp(signame, "USR2") == 0)
+        return SIGUSR2;
+    if (strcmp(signame, "ALRM") == 0)
+        return SIGALRM;
+    if (strcmp(signame, "PIPE") == 0)
+        return SIGPIPE;
+
+    return -1;
+}
+
+int builtin_kill(char **args) {
+    if (args[1] == NULL) {
+        perror("not enough args in kill: kill [-s sig | -sig] pid | jobspec ...");
+        exit(1);
+    }
+    
+    int sig = SIGTERM;
+    int arg_ind = 1;
+
+    if (args[1][0] == '-') {
+        if (strcmp(args[1], "-s") == 0) {
+            if (args[2] == NULL) {
+                perror("kill: option requires an arg");
+                return 1;
+            }
+            sig = parse_signame(args[2]);
+            arg_ind = 3;
+        } else {
+            sig = parse_signame(args[1] + 1);
+            arg_ind = 2;
+        }
+
+        if (sig < 0) {
+            perror("wrong signal");
+            return 1;
+        }
+    }
+
+    if (args[arg_ind] == NULL) {
+        perror("not enough args in kill: kill [-s sig | -sig] pid | jobspec ...");
+        return 1;
+    }
+
+    int status = 0;
+
+    for (int i = arg_ind; args[i] != NULL; ++i) {
+        char *target = args[i];
+
+        if (target[0] == '%') {
+            Job *job = find_job_by_spec(target);
+            if (job == NULL) {
+                perror("No such job");
+                status = 1;
+                continue;;
+            }
+
+            if (kill(-job->pgid, sig) < 0) {
+                perror("kill");
+                status = 1;
+            }
+        } else {
+            pid_t pid = (pid_t)atoi(target);
+            if (pid == 0 && target[0] != '0') {
+                perror("args should be process or jobs");
+                status = 1;
+                continue;;
+            }
+
+            if (kill(pid, sig) < 0) {
+                perror("kill");
+                status = 1;
+            }
+        }
+    }
+
+    return status;
+}
+
+int builtin_wait(char **args) {
+    int last_status = 0;
+
+    if (args[1] == NULL) {
+        while (has_active_jobs()) {
+            int status;
+            pid_t pid = waitpid(-1, &status, WUNTRACED);
+            if (pid < 0) {
+                break;
+            }
+        }
+        update_jobs();
+        return 0;
+    }
+
+    char *target = args[1];
+    Job *job = NULL;
+
+    if (target[0] == '%' || find_job_by_spec(target) != NULL) {
+        job = find_job_by_spec(target);
+        if (job = NULL) {
+            perror("No sush job");
+            return 1;
+        }
+        pid_t pgid = job->pgid;
+        int status = 0;
+
+        while (find_job_by_id(job->id) != NULL && job->state != JOB_DONE) {
+            pid_t p = waitpid(-pgid, &status, WUNTRACED);
+            if (p < 0) {
+                break;
+            }
+
+            update_jobs();
+
+            if (WIFEXITED(status)) {
+                last_status = WEXITSTATUS(status);
+            } else if (WIFSIGNALED(status)) {
+                last_status = 128 + WTERMSIG(status);
+            }
+        }
+    } else {
+        pid_t pid = (pid_t)atoi(target);
+        if (pid <= 0) {
+            perror("pid or job spec not found");
+            return 127;
+        }
+
+        int status;
+        if (waitpid(pid, &status, WUNTRACED) < 0) {
+            perror("wait");
+            return 127;
+        }
+
+        if (WIFEXITED(status)) {
+            last_status = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+            last_status = 128 + WTERMSIG(status);
+        }
+    }
+    return last_status;
 }
