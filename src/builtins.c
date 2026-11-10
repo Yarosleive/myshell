@@ -12,9 +12,11 @@ Builtin builtins[] = {
     {"pwd", builtin_pwd},
     {"exit", builtin_exit},
     {"echo", builtin_echo},
-    {"help", builtin_echo},
+    {"help", builtin_help},
+    {"jobs", builtin_jobs},
     {"fg", builtin_fg},
     {"bg", builtin_bg},
+    {"kill", builtin_kill},
     {"wait", builtin_wait},
     {NULL, NULL}
 };
@@ -36,12 +38,12 @@ int builtin_cd(char **args) {
     if (path == NULL) {
         path = getenv("HOME");
         if (path == NULL) {
-            perror("cd: HOME not set");
+            fprintf(stderr, "cd: HOME not set\n");
             return 1;
         }
     }
     if (chdir(path) != 0) {
-        perror("cd");
+        fprintf(stderr, "cd\n");
         return 1;
     }
     return 0;
@@ -61,7 +63,7 @@ int builtin_pwd(char **args) {
         printf("%s\n", cwd);
         return 0;
     }
-    perror("pwd");
+    fprintf(stderr, "pwd\n");
     return 1;
 }
 
@@ -97,7 +99,7 @@ int builtin_help(char **args) {
     puts("| `fg [%n]` | перевод задания на передний план |");
     puts("| `bg [%n]` | продолжение остановленного задания в фоне |");
     puts("| `kill` | отправка сигнала процессу или заданию |");
-    puts("| `wait [pid\|%n]` | ожидание завершения заданий |");
+    puts("| `wait [pid|%n]` | ожидание завершения заданий |");
     return 1;
 }
 
@@ -120,7 +122,7 @@ int builtin_jobs(char **args) {
             } else {
                 state = "Stopped";
             }
-            printf("[%d]%c  %s\t\t%s\n", job->id, marker, job->state, job->command);
+            printf("[%d]%c  %s\t\t%s\n", job->id, marker, state, job->command);
         }
     }
     return 0;
@@ -129,24 +131,35 @@ int builtin_jobs(char **args) {
 int builtin_fg(char **args) {
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
-        perror("fg: no such job\n");
+        fprintf(stderr, "no such job\n");
         return 1;
     }
-    if (job->command) {
-        printf("%s\n", job->command);
+
+    if (tcsetpgrp(STDIN_FILENO, job->pgid) < 0) {
+        fprintf(stderr, "tcsetpgrp\n");
+        return 1;
+    }
+
+    if (job->state == JOB_STOPPED) {
+        if (kill(-job->pgid, SIGCONT) < 0) {
+            fprintf(stderr, "kill sigcount\n");
+            tcsetpgrp(STDIN_FILENO, getpgrp());
+            return 1;
+        }
     }
 
     job->state = JOB_RUNNING;
-    tcsetpgrp(STDIN_FILENO, job->pgid);
-
-    if (kill(-job->pgid, SIGCONT) < 0) {
-        perror("kill Sigcount");
-    }
 
     int status;
-    waitpid(-job->pgid, &status, WUNTRACED);
+    if (waitpid(-job->pgid, &status, WUNTRACED) < 0) {
+        fprintf(stderr, "waitpid\n");
+        tcsetpgrp(STDIN_FILENO, getpgrp());
+        return 1;
+    }
 
-    tcsetpgrp(STDIN_FILENO, getpgrp());
+    if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {
+        fprintf(stderr, "mysh: fg: failed to regain terminal control\n");
+    }
 
     if (WIFSTOPPED(status)) {
         job->state = JOB_STOPPED;
@@ -155,13 +168,15 @@ int builtin_fg(char **args) {
         job->state = JOB_DONE;
         remove_job_by_id(job->id);
     }
+
+    update_job_pointers();
     return 0;
 }
 
 int builtin_bg(char **args) {
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
-        perror("bg: no such job");
+        fprintf(stderr, "bg: no such job\n");
         return 1;
     }
 
@@ -170,25 +185,27 @@ int builtin_bg(char **args) {
         return 1;
     }
 
+    JobState old_state = job->state;
     job->state = JOB_RUNNING;
+
+    if (kill(-job->pgid, SIGCONT) < 0) {
+        fprintf(stderr, "kill\n");
+        job->state = old_state;
+        return 1;
+    }
+
     if (job->command != NULL) {
         printf("[%d]  %s &\n", job->id, job->command);
     } else {
         printf("[%d]  %s &\n", job->id, "");
     }
-
-    if (kill(-job->pgid, SIGCONT) < 0) {
-        perror("kill");
-        return 1;
-    }
-
     update_job_pointers();
     return 0;
 }
 
 int parse_signame(char *signame) {
     if (signame[0] >= '0' && signame[0] <= '9') {
-        return atoi(signame[0]);
+        return atoi(signame);
     }
     if (strncmp(signame, "SIG", 3) == 0) {
         signame += sizeof(char) * 3;
@@ -222,8 +239,8 @@ int parse_signame(char *signame) {
 
 int builtin_kill(char **args) {
     if (args[1] == NULL) {
-        perror("not enough args in kill: kill [-s sig | -sig] pid | jobspec ...");
-        exit(1);
+        fprintf(stderr, "not enough args in kill: kill [-s sig | -sig] pid | jobspec ...\n");
+        return 1;
     }
     
     int sig = SIGTERM;
@@ -232,7 +249,7 @@ int builtin_kill(char **args) {
     if (args[1][0] == '-') {
         if (strcmp(args[1], "-s") == 0) {
             if (args[2] == NULL) {
-                perror("kill: option requires an arg");
+                fprintf(stderr, "kill: option requires an arg\n");
                 return 1;
             }
             sig = parse_signame(args[2]);
@@ -243,13 +260,13 @@ int builtin_kill(char **args) {
         }
 
         if (sig < 0) {
-            perror("wrong signal");
+            fprintf(stderr, "wrong signal\n");
             return 1;
         }
     }
 
     if (args[arg_ind] == NULL) {
-        perror("not enough args in kill: kill [-s sig | -sig] pid | jobspec ...");
+        fprintf(stderr, "not enough args in kill: kill [-s sig | -sig] pid | jobspec ...\n");
         return 1;
     }
 
@@ -261,25 +278,25 @@ int builtin_kill(char **args) {
         if (target[0] == '%') {
             Job *job = find_job_by_spec(target);
             if (job == NULL) {
-                perror("No such job");
+                fprintf(stderr, "no such job\n");
                 status = 1;
-                continue;;
+                continue;
             }
 
             if (kill(-job->pgid, sig) < 0) {
-                perror("kill");
+                fprintf(stderr, "kill\n");
                 status = 1;
             }
         } else {
             pid_t pid = (pid_t)atoi(target);
             if (pid == 0 && target[0] != '0') {
-                perror("args should be process or jobs");
+                fprintf(stderr, "args should be process or jobs\n");
                 status = 1;
                 continue;;
             }
 
             if (kill(pid, sig) < 0) {
-                perror("kill");
+                fprintf(stderr, "kill\n");
                 status = 1;
             }
         }
@@ -308,8 +325,8 @@ int builtin_wait(char **args) {
 
     if (target[0] == '%' || find_job_by_spec(target) != NULL) {
         job = find_job_by_spec(target);
-        if (job = NULL) {
-            perror("No sush job");
+        if (job == NULL) {
+            fprintf(stderr, "no such job\n");
             return 1;
         }
         pid_t pgid = job->pgid;
@@ -332,13 +349,13 @@ int builtin_wait(char **args) {
     } else {
         pid_t pid = (pid_t)atoi(target);
         if (pid <= 0) {
-            perror("pid or job spec not found");
+            fprintf(stderr, "pid or job spec not found\n");
             return 127;
         }
 
         int status;
         if (waitpid(pid, &status, WUNTRACED) < 0) {
-            perror("wait");
+            fprintf(stderr, "wait\n");
             return 127;
         }
 

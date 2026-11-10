@@ -15,7 +15,7 @@ typedef struct {
     int id;
     pid_t pgid;
     JobState state;
-    char *command
+    char *command;
 } Job;
 
 static Job job_table[MAX_JOBS];

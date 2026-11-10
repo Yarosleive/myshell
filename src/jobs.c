@@ -1,7 +1,9 @@
 #include <jobs.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <signal.h>
 
 void init_jobs() {
     for (int i = 0; i < MAX_JOBS; ++i) {
@@ -20,7 +22,8 @@ int add_job(pid_t pgid, char *command) {
         if (job_table[i].id == 0) {
             job_table[i].id = next_job_id++;
             job_table[i].pgid = pgid;
-            job_table[i].state = JOB_RUNNIG;
+            job_table[i].state = JOB_RUNNING;
+
             if (command != NULL) {
                 job_table[i].command = strdup(command);
             } else {
@@ -121,8 +124,15 @@ void update_jobs(void) {
                 if (WIFSTOPPED(status)) {
                     job_table[i].state = JOB_STOPPED;
                 } else if (WIFCONTINUED(status)) {
-                    job_table[i].state = JOB_RUNNIG;
+                    job_table[i].state = JOB_RUNNING;
                 } else {
+                    job_table[i].state = JOB_DONE;
+                    remove_job_by_id(job_table[i].id);
+                }
+            } else if (pid == 0) {
+
+            } else {
+                if (kill(-job_table[i].pgid, 0) < 0) {
                     job_table[i].state = JOB_DONE;
                     remove_job_by_id(job_table[i].id);
                 }
