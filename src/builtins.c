@@ -176,12 +176,12 @@ int builtin_fg(char **args) {
 int builtin_bg(char **args) {
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
-        fprintf(stderr, "bg: no such job\n");
+        fprintf(stderr, "mysh: bg: no such job\n");
         return 1;
     }
 
     if (job->state == JOB_RUNNING) {
-        printf("Job is already in bg\n");
+        printf("mysh: bg: Job is already in bg\n");
         return 1;
     }
 
@@ -189,15 +189,15 @@ int builtin_bg(char **args) {
     job->state = JOB_RUNNING;
 
     if (kill(-job->pgid, SIGCONT) < 0) {
-        fprintf(stderr, "kill\n");
+        fprintf(stderr, "mysh: bg: kill\n");
         job->state = old_state;
         return 1;
     }
 
     if (job->command != NULL) {
-        printf("[%d]  %s &\n", job->id, job->command);
+        printf("[%d]  %s\n", job->id, job->command);
     } else {
-        printf("[%d]  %s &\n", job->id, "");
+        printf("[%d]  %s\n", job->id, "");
     }
     update_job_pointers();
     return 0;

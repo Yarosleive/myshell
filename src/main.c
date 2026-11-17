@@ -34,6 +34,72 @@ void init_shell() {
     }
 }
 
+void print_ast(ExprNode *node, int indent) {
+    if (node == NULL) return;
+
+    for (int i = 0; i < indent; i++) printf("  ");
+
+    switch (node->type) {
+        case NODE_LIST:
+            printf("NODE_LIST (op: %d)\n", node->binary.op);
+            print_ast(node->binary.left, indent + 1);
+            print_ast(node->binary.right, indent + 1);
+            break;
+
+        case NODE_AND_OR:
+            printf("NODE_AND_OR (op: %d)\n", node->binary.op);
+            print_ast(node->binary.left, indent + 1);
+            print_ast(node->binary.right, indent + 1);
+            break;
+
+        case NODE_PIPELINE:
+            printf("NODE_PIPELINE\n");
+            print_ast(node->binary.left, indent + 1);
+            print_ast(node->binary.right, indent + 1);
+            break;
+
+        case NODE_SIMPLE:
+            printf("NODE_SIMPLE (argc: %d)\n", node->simple.argc);
+            for (int i = 0; i < node->simple.argc; i++) {
+                for (int j = 0; j <= indent; j++) printf("  ");
+                printf("arg[%d]: \"%s\"\n", i, node->simple.args[i]);
+            }
+            if (node->simple.redirs) {
+                for (int j = 0; j <= indent; j++) printf("  ");
+                printf("Redirections:\n");
+                print_ast(node->simple.redirs, indent + 2);
+            }
+            break;
+
+        case NODE_REDIR:
+            printf("NODE_REDIR (op: %d, file: \"%s\")\n", node->redir.op, node->redir.fname ? node->redir.fname : "NULL");
+            if (node->redir.next) {
+                print_ast(node->redir.next, indent);
+            }
+            break;
+
+        case NODE_SUBSHELL:
+            printf("NODE_SUBSHELL\n");
+            for (int j = 0; j <= indent; j++) printf("  ");
+            printf("Inner AST:\n");
+            print_ast(node->subshell.inner, indent + 2);
+            if (node->subshell.redirs) {
+                for (int j = 0; j <= indent; j++) printf("  ");
+                printf("Redirections:\n");
+                print_ast(node->subshell.redirs, indent + 2);
+            }
+            break;
+
+        case NODE_ARG:
+            printf("NODE_ARG\n");
+            break;
+
+        default:
+            printf("UNKNOWN_NODE\n");
+            break;
+    }
+}
+
 int continue_line(char *line) {
     int len = strlen(line);
     if (len == 0) {
@@ -59,36 +125,92 @@ int continue_line(char *line) {
     return 0;
 }
 
-int run_command_line(char *line) {
+int run_command_line(char *line, int dump_tokens, int dump_ast) {
     char *cmd_line_copy = strdup(line);
     int len = strlen(line);
     if (len > 0 && line[len - 1] == '\n') {
         line[len - 1] = '\0';
     }
     if (line[0] == '\0' || line[0] == '#') {
+        free(cmd_line_copy);
         return 0;
     }
 
     Lexer lexer = make_lexer(line);
     Tokenlist tokens = tokenize(&lexer);
+
+    if (lexer.has_error || tokens.data == NULL) {
+        free(cmd_line_copy);
+        return 2;
+    }
+    
+    if (dump_tokens) {
+        free(cmd_line_copy);
+        return 0;
+    }
+
     Parser parser = make_parser(&tokens);
     ExprNode *ast = parse(&parser);
 
-    if (ast == NULL) {
-        return 1;
+    if (parser.has_error || ast == NULL) {
+        if (tokens.data) {
+            free(tokens.data);
+        }
+        free(cmd_line_copy);
+        return 2;
+    }
+
+    if (dump_ast) {
+        print_ast(ast, 0);
+        free_ast(ast);
+        free(cmd_line_copy);
+        return 0;
     }
 
     int status = execute(ast, 0, cmd_line_copy);
 
+    free_ast(ast);
     free(cmd_line_copy);
     return status;
 }
 
+
 int main(int argc, char *argv[]) {
     init_shell();
-    
-    if (argc == 3 && strcmp(argv[1], "-c") == 0) {
-        return run_command_line(argv[2]);
+
+    int dump_tokens = 0;
+    int dump_ast = 0;
+    char *cmd_to_run = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--dump-tokens") == 0) {
+            dump_tokens = 1;
+        } else if (strcmp(argv[i], "--dump-ast") == 0) {
+            dump_ast = 1;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            if (i + 1 < argc) {
+                cmd_to_run = argv[i + 1];
+                i++;
+            } else {
+                fprintf(stderr, "mysh: option '-c' requires an argument\n");
+                return 1;
+            }
+        }
+    }
+
+    if (cmd_to_run != NULL) {
+        is_interactive = 0;
+        return run_command_line(cmd_to_run, dump_tokens, dump_ast);
+    }
+
+    if (dump_tokens || dump_ast) {
+        is_interactive = 0;
+        char full_line[MAX_LINE * 4] = "";
+        char buf[MAX_LINE];
+        while (fgets(buf, sizeof(buf), stdin) != NULL) {
+            strcat(full_line, buf);
+        }
+        return run_command_line(full_line, dump_tokens, dump_ast);
     }
 
     char buf[MAX_LINE];
@@ -128,7 +250,7 @@ int main(int argc, char *argv[]) {
             strcat(full_line, next_buf);
         }
 
-        run_command_line(full_line);
+        run_command_line(full_line, 0, 0);
     }
     return 0;
 }

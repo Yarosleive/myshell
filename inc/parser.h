@@ -9,6 +9,7 @@ typedef struct {
     int has_error;
 } Parser;
 
+void parser_error(Parser *p, const char *msg);
 Token p_peek(Parser *parser, int offset);
 Token p_previous(Parser *parser);
 int p_check(Parser *parser, TokenType type);

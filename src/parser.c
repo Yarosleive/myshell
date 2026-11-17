@@ -22,7 +22,7 @@ Parser make_parser(Tokenlist *tokens) {
 ExprNode *make_binary(NodeType type, ExprNode *left, ExprNode *right, OpType op) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
-        perror("malloc failed for binary");
+        perror("Parser: malloc failed for binary");
         exit(1);
     } 
 
@@ -36,7 +36,7 @@ ExprNode *make_binary(NodeType type, ExprNode *left, ExprNode *right, OpType op)
 ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
-        perror("malloc failed for simple");
+        perror("Parser: malloc failed for simple");
         exit(1);
     } 
 
@@ -54,7 +54,7 @@ ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
 ExprNode *make_redir(NodeType type, ExprNode *next, const char *fname, RedirOp op) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
-        perror("malloc failed for redir");
+        perror("Parser: malloc failed for redir");
         exit(1);
     } 
 
@@ -68,7 +68,7 @@ ExprNode *make_redir(NodeType type, ExprNode *next, const char *fname, RedirOp o
 ExprNode *make_subshell(NodeType type, ExprNode *inner, ExprNode *redirs) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
-        perror("malloc failed for subshell");
+        perror("Parser: malloc failed for subshell");
         exit(1);
     } 
 
@@ -81,7 +81,7 @@ ExprNode *make_subshell(NodeType type, ExprNode *inner, ExprNode *redirs) {
 ExprNode *make_word(NodeType type, char *value) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
-        perror("malloc failed for subshell");
+        perror("Parser: malloc failed for subshell");
         exit(1);
     } 
 
@@ -103,7 +103,7 @@ OpType define_op_type(Token token) {
         case TOKEN_AMPERSAND:
             return OP_AMPERSAND;
         default:
-            perror("unknown op");
+            fprintf(stderr, "Parser: Unknown op\n");;
             exit(1);
     }
 }
@@ -117,16 +117,23 @@ RedirOp define_redir_op(Token token) {
         case TOKEN_GG:
             return REDIR_GG;
         default:
-            perror("unknown redir");
+            fprintf(stderr, "Parser: Unknown redir\n");
             exit(1);
     }
 }
 
-
 // основная функция
 ExprNode *parse(Parser *parser) {
     ExprNode *root = parse_list(parser);
+    if (parser->has_error) {
+        free_ast(root);
+        return NULL;
+    }
     p_expect(parser, TOKEN_EOF);
+    if (parser->has_error) {
+        free_ast(root);
+        return NULL;
+    }
     return root;
 }
 
@@ -136,11 +143,20 @@ ExprNode *parse(Parser *parser) {
 потом читаем правое поддерево*/
 ExprNode *parse_list(Parser *parser) {
     ExprNode *left = parse_and_or(parser);
+    if (parser->has_error) {
+        free_ast(left);
+        return NULL;
+    }
     while (p_match(parser, TOKEN_SEMICOLON) || p_match(parser, TOKEN_AMPERSAND)) {
         OpType op = define_op_type(p_previous(parser));
         ExprNode *right = NULL;
         if (!p_check(parser, TOKEN_EOF) && !p_check(parser, TOKEN_RPAREN)) {
             right = parse_and_or(parser);
+            if (parser->has_error) {
+                free_ast(right);
+                free_ast(left);
+                return NULL;
+            }
         }
         left = make_binary(NODE_LIST, left, right, op);
     }
@@ -150,12 +166,18 @@ ExprNode *parse_list(Parser *parser) {
 // and_or      = pipeline , { ( "&&" | "||" ) , pipeline } ;
 ExprNode *parse_and_or(Parser *parser) {
     ExprNode *left = parse_pipeline(parser);
+    if (parser->has_error) {
+        free_ast(left);
+        return NULL;
+    }
     while (p_match(parser, TOKEN_AND_IF) || p_match(parser, TOKEN_OR_IF)) {
         OpType op = define_op_type(p_previous(parser));
         ExprNode *right = parse_pipeline(parser);
-        if (right == NULL) {
+        if (right == NULL || parser->has_error) {
             parser->has_error = 1;
+            parser_error(parser, "expected pipeline after logical operator");
             free_ast(left);
+            free_ast(right);
             return NULL;
         }
         left = make_binary(NODE_AND_OR, left, right, op);
@@ -166,9 +188,20 @@ ExprNode *parse_and_or(Parser *parser) {
 // pipeline    = command , { "|" , command } ;
 ExprNode  *parse_pipeline(Parser *parser) {
     ExprNode *left = parse_command(parser);
+    if (parser->has_error) {
+        free_ast(left);
+        return NULL;
+    }
     while (p_match(parser, TOKEN_PIPE)) {
         OpType op = define_op_type(p_previous(parser));
         ExprNode *right = parse_command(parser);
+        if (right == NULL || parser->has_error) {
+            parser->has_error = 1;
+            parser_error(parser, "expected command after pipe");
+            free_ast(left);
+            free_ast(right);
+            return NULL;
+        }
         left = make_binary(NODE_PIPELINE, left, right, op);
     }
     return left;
@@ -176,6 +209,9 @@ ExprNode  *parse_pipeline(Parser *parser) {
 
 // command     = simple | subshell ;
 ExprNode  *parse_command(Parser *parser) {
+    if (parser->has_error) {
+        return NULL;
+    }
     if (p_match(parser, TOKEN_LPAREN)) {
         return parse_subshell(parser);
     }
@@ -185,9 +221,24 @@ ExprNode  *parse_command(Parser *parser) {
 // subshell    = "(" , list , ")" , { redirection } ;
 ExprNode  *parse_subshell(Parser *parser) {
     ExprNode *list= parse_list(parser);
+    if (parser->has_error) {
+        free_ast(list);
+        return NULL;
+    }
+
+    if (!p_match(parser, TOKEN_RPAREN)) {
+        parser_error(parser, "expected ')' after subshell");
+        free_ast(list);
+        return NULL;
+    }
+
     ExprNode *redirs = parse_redirection(parser);
-    
-    p_expect(parser, TOKEN_RPAREN);
+    if (parser->has_error) {
+        free_ast(list);
+        free_ast(redirs);
+        return NULL;
+    }
+
     ExprNode *subshell = make_subshell(NODE_SUBSHELL, list, redirs);
     
     return subshell;
@@ -195,14 +246,21 @@ ExprNode  *parse_subshell(Parser *parser) {
 
 // redirection = ( "<" | ">" | ">>" ) , word ;
 ExprNode  *parse_redirection(Parser *parser) {
+    if (parser->has_error) {
+        return NULL;
+    }
     if (p_match(parser, TOKEN_LESS) || p_match(parser, TOKEN_GREATER) || p_match(parser, TOKEN_GG)) {
         RedirOp op = define_redir_op(p_previous(parser));
         if (!p_check(parser, TOKEN_WORD)) {
-            perror("expected filename after redirection");
-            exit(1);
+            parser_error(parser, "expected filename after redirection");
+            return NULL;
         }
         Token fname = *p_advance(parser);
         ExprNode *next = parse_redirection(parser);
+        if (parser->has_error) {
+            free_ast(next);
+            return NULL;
+        }
         return make_redir(NODE_REDIR, next, fname.value, op);
     }
     return NULL;
@@ -212,16 +270,27 @@ ExprNode  *parse_redirection(Parser *parser) {
 // simple      = { redirection } , word , { word | redirection } ;
 ExprNode  *parse_simple(Parser *parser) {
     ExprNode *first_redir = parse_redirection(parser);
+
+    if (parser->has_error) {
+        free_ast(first_redir);
+        return NULL;
+    }
     
     if (!p_check(parser, TOKEN_WORD)) {
-        perror("expected command name");
-        exit(1);
+        parser_error(parser, "expected command name");
+        free_ast(first_redir);
+        return NULL;
     }
     Token command = *p_advance(parser);
 
     ExprNode *last_redir = first_redir;
     int cap = 4, len = 0;
     char **args = malloc(sizeof(char *) * cap);
+    if (args == NULL) {
+        perror("malloc failed");
+        exit(1);
+    }
+
     args[len++] = strdup(command.value);
 
     while (last_redir != NULL && last_redir->redir.next != NULL) {
@@ -231,6 +300,16 @@ ExprNode  *parse_simple(Parser *parser) {
             p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
         if (p_check(parser, TOKEN_LESS) || p_check(parser, TOKEN_GREATER) || p_check(parser, TOKEN_GG)) {
             ExprNode *redir = parse_redirection(parser);
+
+            if (parser->has_error) {
+                for (int i = 0; i < len; ++i) {
+                    free(args[i]);
+                }
+                free(args);
+                free_ast(first_redir);
+                return NULL;
+            }
+
             if (last_redir == NULL) {
                 first_redir = redir;
             } else {
@@ -245,10 +324,18 @@ ExprNode  *parse_simple(Parser *parser) {
             if (len >= cap) {
                 cap *= 2;
                 args = realloc(args, sizeof(char *) * cap);
+                if (args == NULL) {
+                    perror("realloc failed");
+                    exit(1);
+                }
             }
         }
     }
     ExprNode *simple = make_simple(NODE_SIMPLE, first_redir, args, len);
+    for (int i = 0; i < len; ++i) {
+        free(args[i]);
+    }
+    free(args);
     return simple;
 }
 
@@ -264,7 +351,7 @@ Token p_peek(Parser *parser, int offset) {
 
 Token p_previous(Parser *parser) {
     if (parser->pos - 1 < 0) {
-        perror("previous function");
+        fprintf(stderr, "Parser: p_previous - pos - 1 < 0\n");
         exit(1);
     }
     return parser->tokens->data[parser->pos - 1];
@@ -292,8 +379,7 @@ Token *p_advance(Parser *parser) {
 
 void p_expect(Parser *parser, TokenType type) {
     if (!p_match(parser, type)) {
-        perror("Unexpected token");
-        exit(1);
+        parser_error(parser, "Expected another tokken");
     }
 }
 

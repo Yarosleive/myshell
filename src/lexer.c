@@ -26,6 +26,7 @@ Lexer make_lexer(const char *input) {
     lexer.pos = 0;
     lexer.len = strlen(input);
     lexer.input = input;
+    lexer.has_error = 0;
     return lexer;
 }
 
@@ -35,9 +36,17 @@ Tokenlist tokenize(Lexer *lexer) {
     tokens.cap = 4;
     tokens.len = 0;
     tokens.data = malloc(sizeof(Token) * tokens.cap);
+    if (tokens.data == NULL) {
+        perror("Lexer: malloc failed");
+        exit(1);
+    }
 
     while (1) {
         // обрабатываем по слову, обновляем ёмкость, коль надо
+        // Если в процессе токенизации произошла ошибка, освобождаем токен и прерываем цикл
+        if (lexer->has_error) {
+            break;
+        }
         Token token = next_token(lexer);
         if (tokens.len >= tokens.cap) {
             tokens.cap *= 2;
@@ -47,6 +56,9 @@ Tokenlist tokenize(Lexer *lexer) {
         if (token.type == TOKEN_EOF) {
             break;
         }
+    }
+    if (lexer->has_error) {
+        free(tokens.data);
     }
     return tokens;
 }
@@ -61,9 +73,13 @@ Token next_token(Lexer *lexer) {
     Token token;
     token.length = 0;
     token.value = NULL;
+    token.type = TOKEN_EOF;
+
+    if (lexer->has_error) {
+        return token;
+    }
 
     if (at_end(lexer) || peek(lexer, 0) == '#') {
-        token.type = TOKEN_EOF;
         return token;
     }
 
@@ -86,14 +102,20 @@ char *read_quote(Lexer *lexer) {
         advance(lexer, 1);
     }
     if (at_end(lexer)) {
-        perror("not closed quote");
-        exit(1);
+        lexer_error(lexer, "unclosed quote");
+        return NULL;
     }
     advance(lexer, 1);
     
     char *word = malloc(sizeof(char) * (lexer->pos - start));
+    if (word == NULL) {
+        perror("Lexer: malloc failed");
+        exit(1);
+    }
+
+    int end = lexer->pos - 1;
     int j = 0;
-    for (int i = start; i < lexer->pos - 1; ++i) {
+    for (int i = start; i < end; ++i) {
         if (quote == '"' && lexer->input[i] == '\\' &&
             (lexer->input[i + 1] == '\\' || lexer->input[i + 1] == quote)) {
                 ++i;
@@ -117,6 +139,10 @@ Token read_word(Lexer *lexer) {
     int cap = 32;
     int len = 0;
     char *value = malloc(sizeof(char) * cap);
+    if (value == NULL) {
+        perror("Lexer: malloc failed");
+        exit(1);
+    }
 
     while (!at_end(lexer)) {
         char c = peek(lexer, 0);
@@ -127,14 +153,22 @@ Token read_word(Lexer *lexer) {
         int part_len = 1;
         if (c == '\'' || c == '"') {
             part = read_quote(lexer);
+            if (lexer->has_error) {
+                free(value);
+                free(part);
+                token.type = TOKEN_EOF;
+                return token;
+            }
             part_len = strlen(part);
-        }
-        if (c == '\\') {
+        } else if (c == '\\') {
             advance(lexer, 1);
             if (peek(lexer, 0) == '\n') {
                 advance(lexer, 1);
             }
             c = peek(lexer, 0);
+            if (at_end(lexer) || isspace(c) || is_operator_char(c)) {
+                break;
+            }
         }
         if (len + part_len >= cap) {
             cap *= 2;
@@ -144,11 +178,11 @@ Token read_word(Lexer *lexer) {
         if (part != NULL) {
             strcpy(value + len, part);
             len += part_len;
+            free(part);
         } else {
             value[len++] = c;
             advance(lexer, 1);
         }
-        free(part);
     }
     value[len] = '\0';
     token.value = value;
@@ -199,8 +233,8 @@ Token read_operator(Lexer *lexer) {
             token.type = TOKEN_RPAREN;
             break;
         default:
-            perror("Unknown operator");
-            exit(1);
+            lexer_error(lexer, "unknown operator");
+            token.type = TOKEN_EOF;
     }
     return token;
 }
@@ -227,4 +261,11 @@ int match(Lexer *lexer, char expected) {
 // конец ма?
 int at_end(Lexer *lexer) {
     return lexer->pos >= lexer->len;
+}
+
+void lexer_error(Lexer *lexer, const char *msg) {
+    if (!lexer->has_error) {
+        fprintf(stderr, "my_shell: syntax error: %s\n", msg);
+        lexer->has_error = 1;
+    }
 }

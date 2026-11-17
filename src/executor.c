@@ -7,6 +7,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 #define MAX_PIPE_LEN 256
 
@@ -58,14 +59,14 @@ int apply_redirections(ExprNode *redirs) {
         }
         int fd = open(cur->redir.fname, flags, 0644);
         if (fd < 0) {
-            fprintf(stderr, "apply redir: open\n");
-            exit(1);
+            fprintf(stderr, "mysh: %s: %s\n", cur->redir.fname, strerror(errno));
+            return 1;
         }
 
         if (dup2(fd, target_fd) < 0) {
-            fprintf(stderr, "apply redir: dup2\n");
+            fprintf(stderr, "mysh: %s: %s\n", cur->redir.fname, strerror(errno));
             close(fd);
-            exit(1);
+            return -1;
         }
         close(fd);
         cur = cur->redir.next;
@@ -84,7 +85,6 @@ void launch_command(ExprNode *node) {
     }
 
     if (apply_redirections(node->simple.redirs) != 0) {
-        fprintf(stderr, "apply redirection");
         exit(1);
     }
 
@@ -189,7 +189,7 @@ int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
         }
     }
 
-    pid_t pids[256];
+    pid_t pids[MAX_PIPE_LEN];
     pid_t pgid = 0;
 
     for (int i = 0; i < count; ++i) {
@@ -240,7 +240,11 @@ int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
                 fprintf(stderr, "mysh: %s: command not found\n", args[0]);
                 exit(127);
             } else if (cmds[i]->type == NODE_SUBSHELL) {
-                int status = execute(cmds[i], 0, cmd_line);
+                if (apply_redirections(cmds[i]->subshell.redirs) != 0) {
+                    exit(1);
+                }
+                
+                int status = execute(cmds[i]->subshell.inner, 0, cmd_line);
                 exit(status);
             } else {
                 fprintf(stderr, "Error: unexpected node type %d in pipeline\n", cmds[i]->type);
@@ -343,7 +347,6 @@ int execute_simple(ExprNode *node, int bg, char *cmd_line) {
         set_signals_on_default();
 
         if (apply_redirections(node->simple.redirs) != 0) {
-            fprintf(stderr, "apply redirection");
             exit(1);
         }
 
@@ -398,7 +401,6 @@ int execute_subshell(ExprNode *node, int bg, char *cmd_line) {
         set_signals_on_default();
 
         if (apply_redirections(node->subshell.redirs) != 0) {
-            fprintf(stderr, "apply redirection\n");
             exit(1);
         }
         int status = execute(node->subshell.inner, 0, cmd_line);
@@ -406,6 +408,7 @@ int execute_subshell(ExprNode *node, int bg, char *cmd_line) {
     }
     
     setpgid(pid, pid);
+    
     int job_id = add_job(pid, cmd_line);
 
     if (bg) {

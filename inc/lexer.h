@@ -6,8 +6,10 @@ typedef struct {
     const char *input;
     int pos;
     int len;
+    int has_error;
 } Lexer;
 
+void lexer_error(Lexer *lexer, const char *msg);
 Tokenlist tokenize(Lexer *lexer);
 Lexer make_lexer(const char *input);
 
