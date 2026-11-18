@@ -127,11 +127,11 @@ int continue_line(char *line) {
 
 int run_command_line(char *line, int dump_tokens, int dump_ast) {
     char *cmd_line_copy = strdup(line);
-    int len = strlen(line);
-    if (len > 0 && line[len - 1] == '\n') {
-        line[len - 1] = '\0';
+    int len = strlen(cmd_line_copy);
+    if (len > 0 && cmd_line_copy[len - 1] == '\n') {
+        cmd_line_copy[len - 1] = '\0';
     }
-    if (line[0] == '\0' || line[0] == '#') {
+    if (cmd_line_copy[0] == '\0' || cmd_line_copy[0] == '#') {
         free(cmd_line_copy);
         return 0;
     }

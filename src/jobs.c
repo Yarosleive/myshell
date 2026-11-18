@@ -5,6 +5,7 @@
 #include <string.h>
 #include <signal.h>
 
+// инициализируем таблицу
 void init_jobs() {
     for (int i = 0; i < MAX_JOBS; ++i) {
         job_table[i].id = 0;
@@ -17,6 +18,7 @@ void init_jobs() {
     previous_job = NULL;
 }
 
+// добавляем задание в таблицу
 int add_job(pid_t pgid, char *command) {
     for (int i = 0; i < MAX_JOBS; ++i) {
         if (job_table[i].id == 0) {
@@ -35,6 +37,7 @@ int add_job(pid_t pgid, char *command) {
     return -1;
 }
 
+// удаляем задание из таблицы
 void remove_job_by_id(int id) {
     for (int i = 0; i < MAX_JOBS; ++i) {
         if (job_table[i].id == id) {
@@ -51,6 +54,7 @@ void remove_job_by_id(int id) {
     update_job_pointers();
 }
 
+// обновляем текущее и предыдущее задания
 void update_job_pointers(void) {
     Job *new_cur = NULL;
     Job *new_prev = NULL;
@@ -68,6 +72,7 @@ void update_job_pointers(void) {
     previous_job = new_prev;
 }
 
+// поиск задания по номеру
 Job *find_job_by_id(int id) {
     for (int i = 0; i < MAX_JOBS; ++i) {
         if (job_table[i].id == id) {
@@ -77,6 +82,7 @@ Job *find_job_by_id(int id) {
     return NULL;
 }
 
+// поиск по имени
 Job *find_job_by_spec(char *spec) {
     if (spec == NULL) {
         return get_cur_job();
@@ -115,6 +121,7 @@ Job *get_job_by_ind(int index) {
     return &job_table[index];
 }
 
+// обновляем таблицу, обновляя состояния и удаляя завершившиеся задания
 void update_jobs(void) {
     int status;
     for (int i = 0; i < MAX_JOBS; ++i) {

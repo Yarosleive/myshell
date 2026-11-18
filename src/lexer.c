@@ -7,9 +7,9 @@
 
 /*Идея такая: в tokenize с помощью next_token читаем по токену
 Токены бывают 2-х типов: слова и операторы, под каждый тип своя функция.
-Лексер слизан с лексера из интерпретатора матфорфул с поправкой
+Лексер слизан с лексера из интерпретатора матформул с поправкой
 на ограниченность С относительно С++
-Лексер у нас хранит строку, текущую позицию и длину строки*/
+Лексер у нас хранит строку, текущую позицию, длину строки и наличие ошибки*/
 
 int is_operator_char(char c) {
     return c == '|' || c == '&' || c == ';' ||
@@ -90,13 +90,17 @@ Token next_token(Lexer *lexer) {
     return read_operator(lexer);
 }
 
+/*Чтение "Цитаты". Текст в кавычках записывается в строку, так как у нас есть
+экранированные символы, эта же строка и возвращается и затем присоединяется к
+слову*/
 char *read_quote(Lexer *lexer) {
     char quote = peek(lexer, 0);
         advance(lexer, 1);
     int start = lexer->pos;
+    // Сначала определяем длину слова
     while (peek(lexer, 0) != quote && !at_end(lexer) ) {
         if (quote == '"' && peek(lexer, 0) == '\\' &&
-            (peek(lexer, 1) == '\\' || peek(lexer, 1) == quote)) {
+            (peek(lexer, 1) == '\\' || peek(lexer, 1) == quote)) { // пропускаем / и "
                 advance(lexer, 1);
         }
         advance(lexer, 1);
@@ -113,6 +117,7 @@ char *read_quote(Lexer *lexer) {
         exit(1);
     }
 
+    // Проходимся по строке и записываем только нужные символы
     int end = lexer->pos - 1;
     int j = 0;
     for (int i = start; i < end; ++i) {
@@ -151,6 +156,7 @@ Token read_word(Lexer *lexer) {
         }
         char *part = NULL;
         int part_len = 1;
+        // отдельно читаем кавычки. Помогает при аб" аапа"ва
         if (c == '\'' || c == '"') {
             part = read_quote(lexer);
             if (lexer->has_error) {
@@ -160,7 +166,7 @@ Token read_word(Lexer *lexer) {
                 return token;
             }
             part_len = strlen(part);
-        } else if (c == '\\') {
+        } else if (c == '\\') { // Экранируем /
             advance(lexer, 1);
             if (peek(lexer, 0) == '\n') {
                 advance(lexer, 1);
@@ -263,6 +269,7 @@ int at_end(Lexer *lexer) {
     return lexer->pos >= lexer->len;
 }
 
+// Выставляем флаг ошибки и выводим сообщение о ней
 void lexer_error(Lexer *lexer, const char *msg) {
     if (!lexer->has_error) {
         fprintf(stderr, "my_shell: syntax error: %s\n", msg);

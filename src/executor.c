@@ -11,6 +11,7 @@
 
 #define MAX_PIPE_LEN 256
 
+// Является ли функция встроенной
 int is_builtin(char *name) {
     return (strcmp("echo", name) == 0 || strcmp("cd", name) == 0 || strcmp("pwd", name) == 0 ||
             strcmp("help", name) == 0 || strcmp("exit", name) == 0 || strcmp("jobs", name) == 0 ||
@@ -18,6 +19,7 @@ int is_builtin(char *name) {
             strcmp("wait", name) == 0);
 }
 
+// Игнорируем сигналы
 void set_signals_on_default(void) {
     signal(SIGINT, SIG_DFL);
     signal(SIGQUIT, SIG_DFL);
@@ -26,6 +28,7 @@ void set_signals_on_default(void) {
     signal(SIGTTOU, SIG_DFL);
 }
 
+// Установка состояния JOB_STOPPED группе, если она была остановлена
 void check_if_stopped(int job_id, int status1, int status2) {
     Job *job = find_job_by_id(job_id);
     if (job != NULL) {
@@ -38,6 +41,8 @@ void check_if_stopped(int job_id, int status1, int status2) {
     }
 }
 
+/*Обработка перенаправлений. Проходится по списку перенаправлений,
+открывает файлы с нужными флагами, перенапрвлет ввод/вывод и закрывает файл*/
 int apply_redirections(ExprNode *redirs) {
     ExprNode *cur = redirs;
     while (cur != NULL) {
@@ -74,6 +79,7 @@ int apply_redirections(ExprNode *redirs) {
     return 0;
 }
 
+// Запуск команды. Сначала как встроенная, затем через exec
 void launch_command(ExprNode *node) {
     if (node == NULL || node->simple.args == NULL || node->simple.args[0] == NULL) {
         exit(0);
@@ -98,6 +104,7 @@ void launch_command(ExprNode *node) {
     exit(127);
 }
 
+// по сути основная функция
 int execute(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
@@ -118,7 +125,9 @@ int execute(ExprNode *node, int bg, char *cmd_line) {
             return 1;
     }
 }
-
+/* обработка list. Здесь определяется режим(bg или fg)
+Все execute работа/т по общему принципу: исполяем левое поддерево,
+и, если есть, правое*/
 int execute_list(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
@@ -152,6 +161,7 @@ int execute_and_or(ExprNode *node, int bg, char *cmd_line) {
     return status;
 }
 
+// Собираем все ноды пайплайна в один список и запоминаем их количество
 void collect_pipeline(ExprNode *node, ExprNode **cmds, int *count) {
     if (node == NULL) {
         return;
@@ -164,6 +174,18 @@ void collect_pipeline(ExprNode *node, ExprNode **cmds, int *count) {
     }
 }
 
+
+/*Функция вышла огромная, но по-другому не вышло.
+Сначала записываем все ноды в список, создаем (n-1) пайпов.
+Дальше с помощью пайпов перенаправляем ввод-вывод у нодов пайплайна
+и задаем всем общий pgid,
+в самом начале устанавливаем пид группы(пид родителя в i == 0)
+Внутренние Node_Simple и Node_Shell приходится обрабатывать
+прям здесь, так как специальные функции вызывают форк, который ломает pgid и перенапрвление,
+а придумывать что-то оригинально очень лень.
+Затем, добавляем группу в таблицу заданий и, если процесс фоновый, завершаемся.
+Иначе передавем управление терминалов, ждем заверщения дочерних процессов и 
+возвращаем терминал, обрабатывая EXITSTATUS*/
 int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL) {
         return 0;
@@ -251,6 +273,7 @@ int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
                 exit(1);
             }
         } else {
+            // Устанавливаем пид группы
             if (i == 0) {
                 pgid = pid;
             }
@@ -304,6 +327,11 @@ int execute_pipeline(ExprNode *node, int bg, char *cmd_line) {
     return 1;
 }
 
+/*Выполняем простую команду. Очередной монстр.
+Сначала случай fg и встроенной функции, ее просто выполняем с учётом перенаправлений
+и всё. Иначе делаем форк, так как без него exec завершит шелл, в нём уставнавливаем pgid.
+Дальше то же, что и во второй част pipeline: если bg, то return, иначе
+передаём терминал, дожидаемся заверщения дочернего процессаи проверяем EXITSTATUS*/
 int execute_simple(ExprNode *node, int bg, char *cmd_line) {
     if (node == NULL || node->simple.args == NULL || node->simple.args[0] == NULL) {
         return 0;
@@ -387,6 +415,8 @@ int execute_simple(ExprNode *node, int bg, char *cmd_line) {
     return 1;
 }
 
+/* В сабшелл делаем форк, устанавливаем свою группу процессов и вызываем execute
+Потом всё типично*/
 int execute_subshell(ExprNode *node, int bg, char *cmd_line) {
     if (node->subshell.inner == NULL) {
         return 0;

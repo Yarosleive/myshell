@@ -1,0 +1,26 @@
+true && echo "AND: success"
+false || echo "OR: fallback works"
+false && echo "AND: should NOT print this"
+true || echo "OR: should NOT print this"
+
+# 2. Изоляция состояния (cd внутри подоболочки не меняет cwd шелла)
+pwd
+(cd /tmp && pwd)
+pwd
+
+# 3. Перенаправление для всей группы команд в подоболочке
+(echo "Header"; echo "Item 1"; echo "Item 2") > block_out.txt
+cat < block_out.txt
+rm block_out.txt
+
+# 4. Вложенные подоболочки
+((echo "Deep nesting works"))
+
+# 5. Комбинация подоболочки, перенаправления и пайплайна
+(seq 1 10; echo "11") | grep "1"
+
+# 6. Цепочки команд через точку с запятой (;)
+echo "First"; echo "Second"; echo "Third"
+
+# 7. Выход
+exit

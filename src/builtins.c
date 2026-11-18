@@ -21,6 +21,7 @@ Builtin builtins[] = {
     {NULL, NULL}
 };
 
+// Ишем встроенную функцию в массиве builtins
 int execute_builtin(char **args) {
     if (args[0] == NULL) {
         return 0;
@@ -103,6 +104,8 @@ int builtin_help(char **args) {
     return 1;
 }
 
+/* Выводим список текущих заданий
+Обновляем сам список, затем проходимся по нему */
 int builtin_jobs(char **args) {
     update_jobs();
     for (int i = 0; i < MAX_JOBS; ++i) {
@@ -128,6 +131,9 @@ int builtin_jobs(char **args) {
     return 0;
 }
 
+/*Перевод программы на передний план
+Доставем задание из таблицы, отправляем SICCONT,
+передаём терминал, ждём конца, проверяем EXITSTATUS, обновляем таблицу */
 int builtin_fg(char **args) {
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
@@ -173,6 +179,7 @@ int builtin_fg(char **args) {
     return 0;
 }
 
+/*Ищем задание в таблицу, отправляем SICCONT, обновляем таблицу*/
 int builtin_bg(char **args) {
     Job *job = find_job_by_spec(args[1]);
     if (job == NULL) {
@@ -202,6 +209,7 @@ int builtin_bg(char **args) {
     update_job_pointers();
     return 0;
 }
+
 
 int parse_signame(char *signame) {
     if (signame[0] >= '0' && signame[0] <= '9') {
@@ -236,7 +244,8 @@ int parse_signame(char *signame) {
 
     return -1;
 }
-
+/*Отправка сигнала
+Парсим имя и отправляем сигнал*/
 int builtin_kill(char **args) {
     if (args[1] == NULL) {
         fprintf(stderr, "not enough args in kill: kill [-s sig | -sig] pid | jobspec ...\n");
@@ -305,6 +314,8 @@ int builtin_kill(char **args) {
     return status;
 }
 
+/*Ждём завершения либо всех заданий, либо конкретной группы,
+либо процесса*/
 int builtin_wait(char **args) {
     int last_status = 0;
 

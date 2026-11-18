@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 /*Идея такая: существуют разные "уровни" строки интерпретатора
-Под каждый урвоень написана своя фунция
+Под каждый уровень написана своя фунция
 Формируем дерево по этим уровням*/
 
 // Аналок конструктора 
@@ -33,6 +33,7 @@ ExprNode *make_binary(NodeType type, ExprNode *left, ExprNode *right, OpType op)
     return expr;
 }
 
+// Узел типа simple
 ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
@@ -51,6 +52,7 @@ ExprNode *make_simple(NodeType type, ExprNode *redirs, char **args, int argc) {
     return expr;
 }
 
+// узел типа redir
 ExprNode *make_redir(NodeType type, ExprNode *next, const char *fname, RedirOp op) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
@@ -65,6 +67,7 @@ ExprNode *make_redir(NodeType type, ExprNode *next, const char *fname, RedirOp o
     return expr;
 }
 
+// узел типа subshell
 ExprNode *make_subshell(NodeType type, ExprNode *inner, ExprNode *redirs) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
@@ -78,6 +81,7 @@ ExprNode *make_subshell(NodeType type, ExprNode *inner, ExprNode *redirs) {
     return expr;
 }
 
+// узел типа word
 ExprNode *make_word(NodeType type, char *value) {
     ExprNode *expr = malloc(sizeof(ExprNode));
     if (expr == NULL) {
@@ -90,6 +94,7 @@ ExprNode *make_word(NodeType type, char *value) {
     return expr;
 }
 
+// определяем тип операции
 OpType define_op_type(Token token) {
     switch (token.type) {
         case TOKEN_OR_IF:
@@ -103,11 +108,12 @@ OpType define_op_type(Token token) {
         case TOKEN_AMPERSAND:
             return OP_AMPERSAND;
         default:
-            fprintf(stderr, "Parser: Unknown op\n");;
+            fprintf(stderr, "Parser: Unknown op\n");
             exit(1);
     }
 }
 
+// тип перенаправления
 RedirOp define_redir_op(Token token) {
     switch (token.type) {
         case TOKEN_LESS:
@@ -232,6 +238,7 @@ ExprNode  *parse_subshell(Parser *parser) {
         return NULL;
     }
 
+    // обработка перенаправлений для subshell
     ExprNode *redirs = parse_redirection(parser);
     if (parser->has_error) {
         free_ast(list);
@@ -245,6 +252,7 @@ ExprNode  *parse_subshell(Parser *parser) {
 }
 
 // redirection = ( "<" | ">" | ">>" ) , word ;
+// перенаправления сохраняются в виде однонаправленного списка
 ExprNode  *parse_redirection(Parser *parser) {
     if (parser->has_error) {
         return NULL;
@@ -266,7 +274,6 @@ ExprNode  *parse_redirection(Parser *parser) {
     return NULL;
 }
 
-// сделать редирекции 
 // simple      = { redirection } , word , { word | redirection } ;
 ExprNode  *parse_simple(Parser *parser) {
     ExprNode *first_redir = parse_redirection(parser);
@@ -283,6 +290,7 @@ ExprNode  *parse_simple(Parser *parser) {
     }
     Token command = *p_advance(parser);
 
+    // Редирекции могут быть до и после слова => просто обрабатываем всё вместе в цикле
     ExprNode *last_redir = first_redir;
     int cap = 4, len = 0;
     char **args = malloc(sizeof(char *) * cap);
